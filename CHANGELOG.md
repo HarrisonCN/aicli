@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the `/export [file]` REPL command write a conversation as a Markdown transcript (tool calls and
   results folded into `<details>`, long results clipped) or as raw JSON. Files are mode 600 and are not
   overwritten without `--force`.
+- **`aicli doctor`** checks your setup: Node.js version, config file (valid JSON, private permissions,
+  invalid values), API key, base URL (invalid, set by `./.env`, plain http to a remote host), the default
+  model's profile, a live `GET /models` call (key accepted, model offered), web tools, `AICLI.md` files
+  and the sessions directory. `--offline` skips the network call; `--json` for scripts; exits 1 on failure.
 
 ## [0.2.0] - 2026-10-06
 
