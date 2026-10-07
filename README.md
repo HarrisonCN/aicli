@@ -77,6 +77,19 @@ aicli config --set defaultModel=gpt-4o
 aicli config --list          # API key is masked
 ```
 
+Then check that everything is wired up:
+
+```bash
+aicli doctor            # API key, endpoint reachability, model, web tools, sessions
+aicli doctor --offline  # skip the network check
+aicli doctor --json     # machine-readable; exit code 1 if any check fails
+```
+
+`aicli doctor` calls `GET <baseURL>/models` with your key to confirm the
+endpoint is reachable, the key is accepted and your default model is offered.
+It also warns about a world-readable config file, a base URL set by `./.env`,
+plain-http remote endpoints, and models whose context window it has to guess.
+
 > A `.env` file in the current directory is loaded too. aicli warns when
 > `OPENAI_BASE_URL` comes from `.env`, since a cloned repo could use it to send
 > your API key to another server.
@@ -327,6 +340,7 @@ aicli/
 │   └── utils/
 │       ├── config.ts   # Config management
 │       ├── context.ts  # --context loading
+│       ├── doctor.ts   # `aicli doctor` setup checks
 │       ├── instructions.ts # AICLI.md project instructions
 │       ├── models.ts   # Model profiles & request params
 │       ├── paths.ts    # Workspace sandboxing

@@ -264,6 +264,29 @@ program
     console.log(formatSessionList(await listSessions(), 50));
   });
 
+program
+  .command('doctor')
+  .description('Check your setup: API key, endpoint, model, web tools, sessions')
+  .option('--offline', 'Skip the API connection check')
+  .option('--json', 'Output the checks as JSON')
+  .action(async (options: { offline?: boolean; json?: boolean }) => {
+    const { runDoctor, formatDoctorReport, doctorExitCode } = await import('./utils/doctor.js');
+    const { CONFIG_FILE } = await import('./utils/config.js');
+    const configWarnings: string[] = [];
+    const config = await loadConfig((msg) => configWarnings.push(msg));
+    const results = await runDoctor({
+      config,
+      configWarnings,
+      configDir: CONFIG_DIR,
+      configFile: CONFIG_FILE,
+      cwd: process.cwd(),
+      offline: options.offline === true,
+    });
+    if (options.json) console.log(JSON.stringify({ ok: doctorExitCode(results) === 0, checks: results }, null, 2));
+    else console.log(formatDoctorReport(results));
+    process.exitCode = doctorExitCode(results);
+  });
+
 // Show help if no command provided
 if (!process.argv.slice(2).length) {
   printBanner(version);

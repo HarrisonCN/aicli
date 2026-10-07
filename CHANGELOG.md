@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`aicli doctor`** checks your setup: Node.js version, config file (valid JSON, private permissions,
+  invalid values), API key, base URL (invalid, set by `./.env`, plain http to a remote host), the default
+  model's profile, a live `GET /models` call (key accepted, model offered), web tools, `AICLI.md` files
+  and the sessions directory. `--offline` skips the network call; `--json` for scripts; exits 1 on failure.
+
 ## [0.2.0] - 2026-10-06
 
 ### Added
