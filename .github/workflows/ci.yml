@@ -4,14 +4,21 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# Cancel superseded runs on the same branch / PR (pushes to main always run).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -28,4 +35,35 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-      - run: node dist/cli.js --version
+      - name: Smoke-test the built CLI
+        shell: bash
+        run: |
+          node dist/cli.js --version
+          node dist/cli.js --help
+          node dist/cli.js tools
+          AICLI_CONFIG_DIR="$RUNNER_TEMP/aicli-smoke" node dist/cli.js sessions
+
+  package:
+    name: Package contents
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Check the npm tarball ships the CLI and no tests or sources
+        run: |
+          npm pack --dry-run --json > pack.json
+          node -e '
+            const files = require("./pack.json")[0].files.map((f) => f.path);
+            const must = ["dist/cli.js", "README.md", "LICENSE", "package.json"];
+            const missing = must.filter((f) => !files.includes(f));
+            const leaked = files.filter((f) => /\.test\.(js|d\.ts)$|^src\//.test(f));
+            console.log(files.length + " files in package");
+            if (missing.length) { console.error("Missing from package:", missing); process.exit(1); }
+            if (leaked.length) { console.error("Should not be packaged:", leaked); process.exit(1); }
+          '
