@@ -24,7 +24,7 @@ yarn-error.log*
 .DS_Store
 .DS_Store?
 ._*
-.Spotlight-V7
+.Spotlight-V100
 .Trashes
 ehthumbs.db
 Thumbs.db
@@ -39,5 +39,3 @@ Thumbs.db
 coverage/
 .nyc_output/
 
-# aicli config (user-specific)
-~/.aicli/

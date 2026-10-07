@@ -4,7 +4,7 @@
 
 **一个开源的 AI 终端代理工具。**
 
-理解你的代码库 · 执行命令 · 浏览网页 · 帮你写代码
+理解你的代码库 · 执行命令 · 编辑文件 · 帮你写代码
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](../LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
@@ -24,7 +24,6 @@
 - 📂 读取和写入项目文件
 - 🖥️ 执行 Shell 命令并解读输出
 - 🔍 在代码库中进行正则搜索
-- 🌐 搜索网络获取最新信息
 - 🐛 端到端地查找并修复 Bug
 - ✅ 生成并运行测试
 
@@ -32,8 +31,14 @@
 
 ### 安装
 
+> 目前尚未发布到 npm，请从源码安装：
+
 ```bash
-npm install -g aicli
+git clone https://github.com/HarrisonCN/aicli.git
+cd aicli
+npm install
+npm run build
+npm link
 ```
 
 ### 配置
@@ -61,7 +66,19 @@ aicli run "给 src/ 下所有导出函数添加 JSDoc 注释"
 
 # 指定模型
 aicli chat --model gpt-4o "帮我审查这段代码"
+
+# 通过管道传入内容
+git diff main | aicli run "审查这段 diff"
+
+# 自动批准写文件和执行命令（谨慎使用）
+aicli run --yes "运行测试并修复失败的用例"
 ```
+
+## 安全
+
+- `write_file`、`edit_file`、`run_command` 执行前会显示操作内容并询问 `Allow? [y/N]`；没有交互终端时（例如管道输入）默认拒绝，除非加 `--yes`。
+- 文件工具只能访问当前目录内的路径（包括符号链接），除非加 `--allow-outside-workspace`。
+- 按 **Ctrl+C** 取消当前回复或命令，再按一次强制退出。
 
 ## 可用工具
 
@@ -70,10 +87,11 @@ aicli chat --model gpt-4o "帮我审查这段代码"
 | `read_file` | 读取文件内容，支持指定行范围 |
 | `write_file` | 写入或创建文件 |
 | `edit_file` | 对文件进行精准的字符串替换 |
-| `run_command` | 执行 Shell 命令（带超时保护） |
+| `run_command` | 执行 Shell 命令（带超时保护，执行前询问） |
 | `list_directory` | 列出文件和目录（支持递归） |
-| `search_files` | 跨文件的正则搜索 |
-| `web_search` | 搜索网络获取最新信息 |
+| `search_files` | 跨文件的正则搜索（纯 JS 实现，支持 Windows） |
+
+网络搜索功能尚在规划中，目前不可用。
 
 ## 支持的模型
 

@@ -4,12 +4,11 @@
 
 **An open-source AI agent that lives in your terminal.**
 
-Understands your codebase · Runs commands · Browses the web · Ships code
+Understands your codebase · Runs commands · Edits files · Ships code
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-blue.svg)](https://www.typescriptlang.org)
-[![npm version](https://img.shields.io/npm/v/aicli.svg)](https://www.npmjs.com/package/aicli)
 [![CI](https://github.com/HarrisonCN/aicli/actions/workflows/ci.yml/badge.svg)](https://github.com/HarrisonCN/aicli/actions)
 
 [English](#) · [中文](docs/README.zh-CN.md) · [Docs](docs/) · [Examples](examples/)
@@ -27,7 +26,6 @@ It uses a **ReAct (Reasoning + Acting)** loop to autonomously:
 - 📂 Read and write files in your project
 - 🖥️ Execute shell commands and interpret output
 - 🔍 Search across your codebase with regex
-- 🌐 Search the web for up-to-date information
 - 🐛 Find and fix bugs end-to-end
 - ✅ Generate and run tests
 
@@ -52,12 +50,14 @@ Bearer prefix check is missing. Here's the fix:
 
 ### Installation
 
-```bash
-# npm
-npm install -g aicli
+> `aicli` is not published to npm yet. Install from source:
 
-# or run directly with npx
-npx aicli chat "explain this codebase"
+```bash
+git clone https://github.com/HarrisonCN/aicli.git
+cd aicli
+npm install
+npm run build
+npm link        # puts `aicli` on your PATH
 ```
 
 ### Configuration
@@ -70,10 +70,15 @@ export OPENAI_API_KEY=sk-...
 export OPENAI_BASE_URL=http://localhost:11434/v1
 export OPENAI_API_KEY=ollama
 
-# Or configure persistently
+# Or configure persistently (stored in ~/.aicli/config.json, mode 600)
 aicli config --set apiKey=sk-...
 aicli config --set defaultModel=gpt-4o
+aicli config --list          # API key is masked
 ```
+
+> A `.env` file in the current directory is loaded too. aicli warns when
+> `OPENAI_BASE_URL` comes from `.env`, since a cloned repo could use it to send
+> your API key to another server.
 
 ### Usage
 
@@ -96,9 +101,44 @@ aicli chat --no-tools "explain the difference between TCP and UDP"
 # Load context from a directory
 aicli chat --context ./src "what does this codebase do?"
 
-# Output as JSON (for scripting)
+# Pipe input in (appended to the task)
+git diff main | aicli run "review this diff"
+
+# Output as JSON (for scripting); exit code is non-zero on failure
 aicli run --json "list all TODO comments in the codebase"
+
+# Let the agent write files and run commands without asking (use with care)
+aicli run --yes "run the tests and fix any failures"
 ```
+
+In the REPL, type `/reset` to clear the conversation and `exit` to quit.
+Press **Ctrl+C** to cancel the current response or command; press it again to
+force-quit.
+
+### Options (`chat` and `run`)
+
+| Flag | Description |
+|------|-------------|
+| `-m, --model <model>` | Model (default: `defaultModel` from config, else `gpt-4o`) |
+| `-t, --temperature <n>` | Sampling temperature, 0–2 |
+| `--max-iterations <n>` | Max agent loop iterations |
+| `--no-tools` | Pure chat, no tools |
+| `--no-stream` | Wait for the full response instead of streaming tokens |
+| `--context <path>` | Add a file (contents) or directory (file tree) to the prompt |
+| `-y, --yes` | Auto-approve writes, edits and shell commands |
+| `--allow-outside-workspace` | Let file tools access paths outside the current directory |
+| `--json` (`run` only) | Print the result as JSON |
+
+## Safety
+
+- **Approval:** `write_file`, `edit_file` and `run_command` show what they are
+  about to do and ask `Allow? [y/N]` first. With no interactive terminal (for
+  example when input is piped) they are denied unless you pass `--yes`.
+- **Workspace sandbox:** file tools only touch paths inside the current
+  directory, including through symlinks, unless `--allow-outside-workspace` is set.
+  Note that an approved `run_command` runs with your full user permissions.
+- **Limits:** command timeouts (default 30 s), and output/read/search size caps
+  keep runaway tools from flooding the model's context.
 
 ## Available Tools
 
@@ -107,10 +147,12 @@ aicli run --json "list all TODO comments in the codebase"
 | `read_file` | Read file contents, optionally by line range |
 | `write_file` | Write or create files |
 | `edit_file` | Make targeted string replacements in files |
-| `run_command` | Execute shell commands with timeout |
+| `run_command` | Execute shell commands with timeout (asks first) |
 | `list_directory` | List files and folders (recursive) |
-| `search_files` | Grep-style regex search across files |
-| `web_search` | Search the web for current information |
+| `search_files` | Regex search across files (pure JS, works on Windows) |
+
+`write_file` and `edit_file` also ask before changing anything. Web search is on
+the roadmap and not available yet.
 
 ```bash
 # List all available tools
@@ -119,7 +161,7 @@ aicli tools
 
 ## Supported Models
 
-`aicli` works with any OpenAI-compatible API. Tested with:
+`aicli` works with any OpenAI-compatible API that supports function calling, for example:
 
 | Provider | Models |
 |----------|--------|
@@ -141,6 +183,9 @@ aicli tools
 | `defaultModel` | `AICLI_MODEL` | `gpt-4o` | Default model |
 | `temperature` | — | `0.7` | Sampling temperature |
 | `maxIterations` | — | `20` | Max agent loop iterations |
+| `stream` | — | `true` | Stream tokens as they arrive |
+
+Unknown keys and invalid values are rejected by `aicli config --set`.
 
 ## Architecture
 
@@ -153,9 +198,13 @@ aicli/
 │   ├── tools/
 │   │   └── index.ts    # Tool definitions & executors
 │   ├── ui/
-│   │   └── banner.ts   # Terminal UI utilities
+│   │   ├── banner.ts   # Terminal UI utilities
+│   │   └── repl.ts     # REPL, approval prompts, Ctrl+C handling
 │   └── utils/
 │       ├── config.ts   # Config management
+│       ├── context.ts  # --context loading
+│       ├── paths.ts    # Workspace sandboxing
+│       ├── text.ts     # Truncation / masking helpers
 │       └── types.ts    # Shared TypeScript types
 ├── examples/           # Usage examples
 ├── docs/               # Documentation
@@ -175,12 +224,16 @@ npm install
 # Run in development mode
 npm run dev -- chat "hello"
 
-# Run tests
+# Typecheck, lint, test, build
+npm run typecheck
+npm run lint
 npm test
+npm run build
 ```
 
 ## Roadmap
 
+- [ ] Web search tool
 - [ ] MCP (Model Context Protocol) server support
 - [ ] Plugin system for custom tools
 - [ ] Persistent conversation memory

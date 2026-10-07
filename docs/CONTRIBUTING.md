@@ -63,10 +63,11 @@ Example:
 
 // In executeTool():
 case 'my_new_tool':
-  return myNewTool(args.param1 as string);
+  return await myNewTool(ctx, args.param1);
 
-// Implementation:
-async function myNewTool(param1: string): Promise<string> {
+// Implementation: validate args, resolve paths with resolveInWorkspace(),
+// and call approve() first if the tool changes anything.
+async function myNewTool(ctx: ToolContext, param1: unknown): Promise<string> {
   // ...
 }
 ```
@@ -76,7 +77,7 @@ async function myNewTool(param1: string): Promise<string> {
 1. Create a feature branch: `git checkout -b feature/my-feature`
 2. Make your changes with clear, focused commits
 3. Add or update tests as appropriate
-4. Ensure all tests pass: `npm test`
+4. Ensure typecheck, lint and tests pass: `npm run typecheck && npm run lint && npm test`
 5. Ensure the build succeeds: `npm run build`
 6. Submit a pull request with a clear description
 
