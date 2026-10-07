@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, readFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -102,5 +102,25 @@ describe('slash commands', () => {
     await handleCommand('/compact', t.ctx);
     expect(t.out()).toMatch(/Nothing to compact/);
     expect(await handleCommand('/quit', t.ctx)).toEqual({ exit: true });
+  });
+
+  it('/export writes the conversation to a file and will not overwrite it', async () => {
+    const { agent, ctx, out, clear } = setup();
+    await handleCommand('/export', ctx);
+    expect(out()).toContain('Nothing to export yet.');
+    await agent.run('hello there');
+    const file = join(dir, 'chat.md');
+    clear();
+    await handleCommand(`/export ${file}`, ctx);
+    expect(out()).toContain(`Exported 2 messages to ${file}.`);
+    const md = await readFile(file, 'utf-8');
+    expect(md).toContain('### 🧑 User\n\nhello there');
+    expect(md).toContain('reply');
+    clear();
+    await handleCommand(`/export ${file}`, ctx);
+    expect(out()).toMatch(/already exists\. Choose another file name\./);
+    const jsonFile = join(dir, 'chat.json');
+    await handleCommand(`/export ${jsonFile}`, ctx);
+    expect(JSON.parse(await readFile(jsonFile, 'utf-8')).messages).toHaveLength(2);
   });
 });

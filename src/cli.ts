@@ -246,23 +246,61 @@ program
 
 program
   .command('sessions')
-  .description('List or delete saved chat sessions')
+  .description('List, export or delete saved chat sessions')
   .option('--delete <id>', 'Delete a session by id or name')
-  .action(async (options: { delete?: string }) => {
-    if (options.delete) {
-      const ok = await deleteSession(options.delete).catch((err: unknown) => {
-        process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
-        return false;
-      });
-      if (ok) console.log(`✓ Deleted session ${options.delete}`);
-      else {
-        process.stderr.write(`No session matches "${options.delete}".\n`);
+  .option('--export <id>', 'Export a session (by id, name or prefix) as Markdown or JSON')
+  .option('--format <format>', 'Export format: markdown (md) or json (default: from --output, else markdown)')
+  .option('-o, --output <file>', 'Write the export to a file instead of stdout')
+  .option('--force', 'Overwrite --output if it exists')
+  .option('--no-tool-output', 'Leave tool arguments and results out of a Markdown export')
+  .action(
+    async (options: { delete?: string; export?: string; format?: string; output?: string; force?: boolean; toolOutput?: boolean }) => {
+      if (options.delete && options.export) {
+        process.stderr.write('Use either --delete or --export, not both.\n');
         process.exitCode = 1;
+        return;
       }
-      return;
+      if (options.export) {
+        const { exportSession, formatFromPath, parseExportFormat, writeExport } = await import('./utils/export.js');
+        try {
+          const format = options.format
+            ? parseExportFormat(options.format)
+            : (options.output && formatFromPath(options.output)) || 'markdown';
+          const session = await loadSession(options.export);
+          if (!session) {
+            process.stderr.write(`No session matches "${options.export}".\n`);
+            process.exitCode = 1;
+            return;
+          }
+          const content = exportSession(session, format, { toolOutput: options.toolOutput !== false });
+          if (options.output) {
+            await writeExport(options.output, content, options.force === true);
+            process.stderr.write(`✓ Exported session ${session.id} to ${options.output}\n`);
+          } else {
+            process.stdout.write(content);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`Error: ${msg}${/already exists/.test(msg) ? ' Use --force to overwrite.' : ''}\n`);
+          process.exitCode = 1;
+        }
+        return;
+      }
+      if (options.delete) {
+        const ok = await deleteSession(options.delete).catch((err: unknown) => {
+          process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+          return false;
+        });
+        if (ok) console.log(`✓ Deleted session ${options.delete}`);
+        else {
+          process.stderr.write(`No session matches "${options.delete}".\n`);
+          process.exitCode = 1;
+        }
+        return;
+      }
+      console.log(formatSessionList(await listSessions(), 50));
     }
-    console.log(formatSessionList(await listSessions(), 50));
-  });
+  );
 
 program
   .command('doctor')

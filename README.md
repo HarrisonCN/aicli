@@ -139,7 +139,18 @@ aicli chat --resume demo       # by name, id, or unique id prefix
 aicli chat --resume demo "and now add tests"   # one more message, then exit
 aicli sessions                 # list saved sessions
 aicli sessions --delete demo
+
+# Export a transcript (Markdown by default, JSON for scripts)
+aicli sessions --export demo > demo.md
+aicli sessions --export demo -o demo.json          # format from the extension
+aicli sessions --export demo --no-tool-output -o summary.md
 ```
+
+Markdown exports list the session's model, directory and token usage, then each
+turn; tool calls and their results are folded into `<details>` blocks (results
+are clipped at 4,000 characters; `--no-tool-output` leaves them out). Exported
+files are created with mode 600 and never overwrite an existing file unless you
+pass `--force`. The system prompt is not included.
 
 In the REPL:
 
@@ -152,6 +163,7 @@ In the REPL:
 | `/save [name]` | Save the session, optionally giving it a name |
 | `/load <id\|name>` | Load a saved session |
 | `/sessions` | List saved sessions |
+| `/export [file]` | Export the conversation as Markdown (or JSON if the file ends in `.json`); default file `aicli-session-<name or id>.md` |
 | `/clear` (`/reset`) | Clear the conversation and start a new session |
 | `/exit`, `exit` | Quit (also Ctrl+D) |
 
@@ -340,6 +352,7 @@ aicli/
 │   └── utils/
 │       ├── config.ts   # Config management
 │       ├── context.ts  # --context loading
+│       ├── export.ts   # Session export (Markdown / JSON)
 │       ├── doctor.ts   # `aicli doctor` setup checks
 │       ├── instructions.ts # AICLI.md project instructions
 │       ├── models.ts   # Model profiles & request params
