@@ -59,4 +59,39 @@ describe('sessions', () => {
     expect(await loadSession(s.id)).toBeNull();
     expect(await deleteSession(s.id)).toBe(false);
   });
+
+  it('refuses an ambiguous id prefix and titles sessions from the first real user message', async () => {
+    const a = createSession('/proj/amb');
+    a.id = 'zz-ambig-1';
+    a.messages = [
+      { role: 'user', content: '[Summary of earlier conversation] ...' },
+      { role: 'user', content: '  real\n  question  ' },
+    ];
+    const b = createSession('/proj/amb');
+    b.id = 'zz-ambig-2';
+    await saveSession(a);
+    await saveSession(b);
+    await expect(loadSession('zz-ambig')).rejects.toThrow(/matches 2 sessions/);
+    expect((await loadSession('zz-ambig-1'))?.id).toBe('zz-ambig-1');
+    const list = await listSessions();
+    expect(list.find((s) => s.id === 'zz-ambig-1')?.title).toBe('real question');
+    expect(list.find((s) => s.id === 'zz-ambig-2')?.title).toBe('(empty)');
+  });
+
+  it('formats an empty list and caps long lists', () => {
+    expect(formatSessionList([])).toBe('No saved sessions.');
+    const many = Array.from({ length: 5 }, (_, i) => ({
+      id: `s${i}`,
+      cwd: '/p',
+      updatedAt: '2026-01-02T03:04:05.000Z',
+      messageCount: i,
+      title: `t${i}`,
+    }));
+    const out = formatSessionList(many, 2);
+    expect(out).toContain('s0');
+    expect(out).toContain('s1');
+    expect(out).not.toContain('s2 ');
+    expect(out).toContain('… and 3 more');
+    expect(out).toContain('2026-01-02 03:04');
+  });
 });

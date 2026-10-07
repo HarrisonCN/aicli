@@ -56,4 +56,45 @@ describe('model profiles', () => {
     expect(() => validateModelSettings({ x: { contextWindow: -1 } })).toThrow(/positive integer/);
     expect(() => validateModelSettings({ x: { bogus: 1 } })).toThrow(/unknown setting/);
   });
+
+  it('matches built-in families precisely', () => {
+    expect(resolveModelProfile('gpt-4').contextWindow).toBe(8_192);
+    expect(resolveModelProfile('gpt-4-turbo').contextWindow).toBe(128_000);
+    expect(resolveModelProfile('gpt-4.1-mini').contextWindow).toBe(1_047_576);
+    expect(resolveModelProfile('gpt-3.5-turbo').contextWindow).toBe(16_385);
+    expect(resolveModelProfile('google/gemini-2.0-flash').contextWindow).toBe(1_048_576);
+    const r1 = resolveModelProfile('deepseek-r1:14b');
+    expect(r1).toMatchObject({ supportsTemperature: false, reasoning: true, contextWindow: 64_000, tokenParam: 'max_tokens' });
+    expect(resolveModelProfile('deepseek-chat')).toMatchObject({ supportsTemperature: true, reasoning: false });
+    // The model name is kept as given, even when matching uses the normalized form.
+    expect(resolveModelProfile('OpenAI/GPT-4o').model).toBe('OpenAI/GPT-4o');
+  });
+
+  it('matches user keys case-insensitively, by base name, and escapes regex characters in globs', () => {
+    expect(resolveModelProfile('openai/gpt-4o', { 'GPT-4O': { contextWindow: 1234 } }).contextWindow).toBe(1234);
+    expect(resolveModelProfile('qwen2.5-coder', { 'qwen2.5*': { contextWindow: 999 } }).contextWindow).toBe(999);
+    // "." in a glob is literal, so "qwen2x5" must not match "qwen2.5*".
+    expect(resolveModelProfile('qwen2x5-coder', { 'qwen2.5*': { contextWindow: 999 } }).contextWindow).toBe(DEFAULT_CONTEXT_WINDOW);
+    // Undefined fields in user settings do not erase built-ins.
+    expect(resolveModelProfile('gpt-4o', { 'gpt-4o': { contextWindow: undefined } }).contextWindow).toBe(128_000);
+  });
+
+  it('ignores non-positive output caps and non-finite temperatures', () => {
+    const p = resolveModelProfile('gpt-4o', { 'gpt-4o': { maxOutputTokens: 0 } });
+    expect(buildRequestParams(p, { temperature: Number.NaN }).params).toEqual({});
+    const frac = resolveModelProfile('gpt-4o', { 'gpt-4o': { maxOutputTokens: 100.9 } });
+    expect(buildRequestParams(frac).params).toEqual({ max_tokens: 100 });
+  });
+
+  it('validates every modelSettings field type', () => {
+    expect(() => validateModelSettings({ x: 1 })).toThrow(/must be an object/);
+    expect(() => validateModelSettings({ x: { supportsTemperature: 'no' } })).toThrow(/boolean/);
+    expect(() => validateModelSettings({ x: { inputPricePerMTok: -1 } })).toThrow(/>= 0/);
+    expect(() => validateModelSettings({ x: { tokenParam: 'max_output_tokens' } })).toThrow(/tokenParam/);
+    expect(() => validateModelSettings({ x: { systemRole: 'admin' } })).toThrow(/systemRole/);
+    expect(() => validateModelSettings({ x: { maxOutputTokens: 1.5 } })).toThrow(/positive integer/);
+    expect(validateModelSettings({ x: { systemRole: 'user', tokenParam: 'max_completion_tokens', outputPricePerMTok: 0 } })).toEqual({
+      x: { systemRole: 'user', tokenParam: 'max_completion_tokens', outputPricePerMTok: 0 },
+    });
+  });
 });
