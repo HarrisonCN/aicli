@@ -19,8 +19,8 @@ afterEach(async () => {
 });
 
 describe('tool definitions', () => {
-  it('has unique names and does not advertise the unimplemented web_search', () => {
-    const names = getTools().map((t) => t.function.name);
+  it('has unique names and does not advertise web_search without a key', () => {
+    const names = getTools({ web: { searchProvider: 'tavily' } }).map((t) => t.function.name);
     expect(new Set(names).size).toBe(names.length);
     expect(names).not.toContain('web_search');
   });

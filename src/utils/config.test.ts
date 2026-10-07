@@ -67,4 +67,29 @@ describe('config', () => {
     await mod.loadConfig(warn);
     expect(warn.mock.calls.flat().join(' ')).toMatch(/not valid JSON/);
   });
+
+  it('validates enum and JSON keys, and can unset keys', async () => {
+    expect(mod.parseConfigValue('contextStrategy', 'Truncate')).toBe('truncate');
+    expect(() => mod.parseConfigValue('contextStrategy', 'magic')).toThrow(/one of/);
+    expect(mod.parseConfigValue('webSearchProvider', 'brave')).toBe('brave');
+    expect(mod.parseConfigValue('modelSettings', '{"o3*":{"reasoningEffort":"low"}}')).toEqual({ 'o3*': { reasoningEffort: 'low' } });
+    expect(() => mod.parseConfigValue('modelSettings', '{bad')).toThrow(/valid JSON/);
+    expect(() => mod.parseConfigValue('modelSettings', '{"x":{"temperature":9}}')).toThrow();
+
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await writeFile(mod.CONFIG_FILE, '{}');
+    expect(await mod.manageConfig({ set: 'webSearchApiKey=tvly-secret-123456' })).toBe(0);
+    expect(await mod.manageConfig({ set: 'modelSettings={"gpt-4o":{"contextWindow":64000}}' })).toBe(0);
+    const cfg = await mod.loadConfig(() => {});
+    expect(cfg.modelSettings).toEqual({ 'gpt-4o': { contextWindow: 64000 } });
+    expect(cfg.contextStrategy).toBe('summarize');
+    await mod.manageConfig({ list: true });
+    const printed = log.mock.calls.flat().join('\n');
+    expect(printed).not.toContain('tvly-secret-123456');
+    expect(printed).toContain('{"gpt-4o":{"contextWindow":64000}}');
+    expect(await mod.manageConfig({ unset: 'webSearchApiKey' })).toBe(0);
+    expect(JSON.parse(await readFile(mod.CONFIG_FILE, 'utf-8')).webSearchApiKey).toBeUndefined();
+    log.mockRestore();
+  });
 });
+

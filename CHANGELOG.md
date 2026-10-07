@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-06
+
+### Added
+- **`web_search` tool** with pluggable providers: Tavily, Brave Search and SerpAPI. Configure with
+  `webSearchProvider` / `webSearchApiKey` (or `TAVILY_API_KEY`, `BRAVE_API_KEY`, `SERPAPI_API_KEY`).
+  The tool is only offered to the model when a key is configured; `aicli tools` shows its status.
+- **`web_fetch` tool**: fetches an http(s) URL and returns readable text (built-in HTML-to-text, no new
+  dependencies). Limits: 20 s timeout, 2 MB download, 5 redirects, 100k characters returned. Private,
+  loopback and link-local addresses are refused, including via redirects. Disable with `webFetch=false`.
+- **Context management**: token estimates for the conversation (CJK-aware) and automatic compaction before
+  the context window overflows — old large tool outputs are elided, then the oldest turns are summarized by
+  the model (`contextStrategy=summarize`, default), dropped (`truncate`), or left alone (`off`). Tool calls
+  are never separated from their results.
+- **Model-aware request parameters**: reasoning models (`o1`, `o3`, `o4-mini`, `gpt-5`, …) no longer get
+  `temperature`, use the `developer` role and `max_completion_tokens`. Built-in context windows for common
+  models. Per-model overrides via `modelSettings` (temperature, max output tokens, context window,
+  reasoning effort, system role, prices).
+- **Sessions**: chats auto-save to `~/.aicli/sessions/` (mode 600). `aicli chat --resume [id|name]`,
+  `aicli sessions [--delete <id>]`, and `saveSessions=false` to opt out.
+- **Slash commands**: `/help`, `/model [name]`, `/cost` (`/usage`, `/tokens`), `/compact`, `/save [name]`,
+  `/load <id|name>`, `/sessions`, `/clear` (`/reset`), `/exit`.
+- **Token usage tracking** (from the API's `usage`, incl. `stream_options.include_usage` when streaming;
+  `streamUsage=false` to disable) and optional cost estimates.
+- **Project instructions**: `AICLI.md` (or `.aicli/AICLI.md`, `.aicli/instructions.md`, `.aicli.md`,
+  `.aicli`) from the repo root down to the cwd, plus `~/.aicli/AICLI.md`, are added to the system prompt.
+  `--no-instructions` / `projectInstructions=false` to skip.
+- `aicli config --unset <key>`; enum and JSON config values are validated.
+
+### Changed
+- One-shot `aicli chat "<message>"` now saves a session so it can be resumed (`aicli run` does not).
+
+The audit fixes merged in #1 (never released separately) are also part of 0.2.0:
+
 ### Security
 - `search_files` no longer builds a shell command from model input (command injection); it is now a pure-JS search.
 - File tools are confined to the workspace root, including through symlinks (`--allow-outside-workspace` to opt out).
@@ -27,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Invalid tool-call JSON is reported to the model instead of running the tool with `{}`.
 - Non-zero exit codes on failure.
 
-### Added
+### Added (audit)
 - Token streaming (`--no-stream` / `stream` config to disable), Ctrl+C cancellation, `/reset` in the REPL.
 - `--yes`, `--allow-outside-workspace`, `--max-iterations`, `-t` validation; `edit_file.replace_all`, `search_files.ignore_case`.
 - Vitest test suite, ESLint flat config, `typecheck` script, CI workflow.
@@ -38,7 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - MCP (Model Context Protocol) server support
 - Plugin system for custom tools
-- Persistent conversation memory
 - Web UI / dashboard
 
 ## [0.1.0] - 2026-03-24
