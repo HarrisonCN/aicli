@@ -12,6 +12,7 @@ import {
   saveSession,
   type Session,
 } from '../utils/sessions.js';
+import { defaultExportFile, exportSession, formatFromPath, writeExport } from '../utils/export.js';
 
 export interface CommandContext {
   agent: Agent;
@@ -148,6 +149,27 @@ export const COMMANDS: Record<string, Command> = {
       if (s.model) ctx.agent.setModel(s.model);
       ctx.session = s;
       ctx.write(`Loaded session ${s.id}${s.name ? ` [${s.name}]` : ''} (${s.messages.length} messages, model ${ctx.agent.getModel()}).\n`);
+    },
+  },
+  export: {
+    usage: '/export [file]',
+    description: 'Export this conversation as Markdown (or JSON for a .json file)',
+    run: async (args, ctx) => {
+      if (ctx.agent.history.length === 0) {
+        ctx.write('Nothing to export yet.\n');
+        return;
+      }
+      syncSession(ctx);
+      const format = (args && formatFromPath(args)) || 'markdown';
+      const file = args || defaultExportFile(ctx.session, format);
+      try {
+        await writeExport(file, exportSession(ctx.session, format));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        ctx.write(`${msg}${/already exists/.test(msg) ? ' Choose another file name.' : ''}\n`);
+        return;
+      }
+      ctx.write(`Exported ${ctx.session.messages.length} messages to ${file}.\n`);
     },
   },
   sessions: {

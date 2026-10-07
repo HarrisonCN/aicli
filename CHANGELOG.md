@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Session export**: `aicli sessions --export <id> [--format md|json] [-o file] [--force] [--no-tool-output]`
+  and the `/export [file]` REPL command write a conversation as a Markdown transcript (tool calls and
+  results folded into `<details>`, long results clipped) or as raw JSON. Files are mode 600 and are not
+  overwritten without `--force`.
+
 ## [0.2.0] - 2026-10-06
 
 ### Added
