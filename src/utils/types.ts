@@ -2,6 +2,11 @@
  * Shared type definitions for aicli
  */
 
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionMessageToolCall,
+} from 'openai/resources/chat/completions';
+
 export interface AgentConfig {
   /** OpenAI-compatible API key */
   apiKey?: string;
@@ -9,16 +14,22 @@ export interface AgentConfig {
   baseURL?: string;
   /** Model to use */
   model?: string;
-  /** Sampling temperature */
-  temperature?: number | string;
+  /** Sampling temperature (0-2) */
+  temperature?: number;
   /** Whether to enable tools */
   tools?: boolean;
-  /** Path to load context from */
+  /** Path to load context from (shown to the model) */
   context?: string;
   /** Maximum agent loop iterations */
   maxIterations?: number;
-  /** Output as JSON */
-  json?: boolean;
+  /** Stream tokens as they arrive (default: true) */
+  stream?: boolean;
+  /** Skip confirmation prompts for write/edit/run tools */
+  autoApprove?: boolean;
+  /** Allow file tools to touch paths outside the workspace root */
+  allowOutsideWorkspace?: boolean;
+  /** Workspace root (defaults to process.cwd()) */
+  root?: string;
 }
 
 export interface AgentResult {
@@ -28,24 +39,10 @@ export interface AgentResult {
   error?: string;
 }
 
-export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
+/** A chat message in OpenAI's wire format. */
+export type Message = ChatCompletionMessageParam;
 
-export interface Message {
-  role: MessageRole;
-  content: string | null;
-  tool_call_id?: string;
-  tool_calls?: ToolCall[];
-  name?: string;
-}
-
-export interface ToolCall {
-  id: string;
-  type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
+export type ToolCall = ChatCompletionMessageToolCall;
 
 export interface Config {
   apiKey?: string;
@@ -53,4 +50,5 @@ export interface Config {
   defaultModel?: string;
   temperature?: number;
   maxIterations?: number;
+  stream?: boolean;
 }

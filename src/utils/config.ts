@@ -1,79 +1,172 @@
 /**
  * Configuration management for aicli
- * Reads from ~/.aicli/config.json and environment variables
+ * Reads from ~/.aicli/config.json and environment variables (env wins).
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { Config } from './types.js';
+import { maskSecret } from './text.js';
 
-const CONFIG_DIR = join(homedir(), '.aicli');
-const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+export const CONFIG_DIR = process.env.AICLI_CONFIG_DIR ?? join(homedir(), '.aicli');
+export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
-export async function loadConfig(): Promise<Config> {
-  // Load .env if present
+type Kind = 'string' | 'number' | 'boolean';
+export const CONFIG_KEYS: Record<keyof Config, { kind: Kind; secret?: boolean; min?: number; max?: number }> = {
+  apiKey: { kind: 'string', secret: true },
+  baseURL: { kind: 'string' },
+  defaultModel: { kind: 'string' },
+  temperature: { kind: 'number', min: 0, max: 2 },
+  maxIterations: { kind: 'number', min: 1, max: 1000 },
+  stream: { kind: 'boolean' },
+};
+
+export function isConfigKey(key: string): key is keyof Config {
+  return Object.prototype.hasOwnProperty.call(CONFIG_KEYS, key);
+}
+
+/** Parse and validate a raw value for a config key. Throws on invalid input. */
+export function parseConfigValue(key: keyof Config, raw: unknown): string | number | boolean {
+  const spec = CONFIG_KEYS[key];
+  if (spec.kind === 'number') {
+    const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
+    if (String(raw).trim() === '' || !Number.isFinite(n)) throw new Error(`${key} must be a number`);
+    if (spec.min !== undefined && n < spec.min) throw new Error(`${key} must be >= ${spec.min}`);
+    if (spec.max !== undefined && n > spec.max) throw new Error(`${key} must be <= ${spec.max}`);
+    return n;
+  }
+  if (spec.kind === 'boolean') {
+    if (typeof raw === 'boolean') return raw;
+    const s = String(raw).trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(s)) return true;
+    if (['false', '0', 'no', 'off'].includes(s)) return false;
+    throw new Error(`${key} must be true or false`);
+  }
+  return String(raw);
+}
+
+/** Drop unknown keys and coerce/validate known ones; bad values are ignored with a warning. */
+function sanitize(raw: unknown, warn: (msg: string) => void): Partial<Config> {
+  const out: Record<string, unknown> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isConfigKey(key) || value === undefined || value === null || value === '') continue;
+    try {
+      out[key] = parseConfigValue(key, value);
+    } catch (err) {
+      warn(`Ignoring invalid config value: ${(err as Error).message}`);
+    }
+  }
+  return out as Partial<Config>;
+}
+
+async function readConfigFile(warn: (msg: string) => void): Promise<Partial<Config>> {
+  let raw: string;
+  try {
+    raw = await readFile(CONFIG_FILE, 'utf-8');
+  } catch {
+    return {}; // no config file yet
+  }
+  try {
+    return sanitize(JSON.parse(raw), warn);
+  } catch {
+    warn(`${CONFIG_FILE} is not valid JSON; ignoring it.`);
+    return {};
+  }
+}
+
+const stderrWarn = (msg: string) => process.stderr.write(`⚠️  ${msg}\n`);
+
+export async function loadConfig(warn: (msg: string) => void = stderrWarn): Promise<Config> {
+  // Load .env from the current directory if present (never overrides real env vars).
+  const baseUrlWasSet = process.env.OPENAI_BASE_URL !== undefined;
   try {
     const { config: dotenvConfig } = await import('dotenv');
-    dotenvConfig();
+    const result = dotenvConfig();
+    if (!baseUrlWasSet && result.parsed?.OPENAI_BASE_URL) {
+      // A cloned repo's .env could silently redirect your API key to another server.
+      warn(`Using OPENAI_BASE_URL=${result.parsed.OPENAI_BASE_URL} from ./.env`);
+    }
   } catch {
     // dotenv not available, skip
   }
 
-  let fileConfig: Partial<Config> = {};
-
-  try {
-    const raw = await readFile(CONFIG_FILE, 'utf-8');
-    fileConfig = JSON.parse(raw);
-  } catch {
-    // Config file doesn't exist yet, use defaults
-  }
+  const fileConfig = await readConfigFile(warn);
+  const envConfig = sanitize(
+    {
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: process.env.OPENAI_BASE_URL,
+      defaultModel: process.env.AICLI_MODEL,
+    },
+    warn
+  );
 
   return {
-    apiKey: process.env.OPENAI_API_KEY ?? fileConfig.apiKey,
-    baseURL: process.env.OPENAI_BASE_URL ?? fileConfig.baseURL,
-    defaultModel: process.env.AICLI_MODEL ?? fileConfig.defaultModel ?? 'gpt-4o',
-    temperature: fileConfig.temperature ?? 0.7,
-    maxIterations: fileConfig.maxIterations ?? 20,
+    defaultModel: 'gpt-4o',
+    temperature: 0.7,
+    maxIterations: 20,
+    stream: true,
+    ...fileConfig,
+    ...envConfig,
   };
 }
 
 export async function saveConfig(config: Partial<Config>): Promise<void> {
-  await mkdir(CONFIG_DIR, { recursive: true });
-  let existing: Partial<Config> = {};
-  try {
-    const raw = await readFile(CONFIG_FILE, 'utf-8');
-    existing = JSON.parse(raw);
-  } catch {
-    // ignore
-  }
+  // The file can hold an API key: keep it private to the user.
+  await mkdir(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  const existing = await readConfigFile(() => {});
   const merged = { ...existing, ...config };
-  await writeFile(CONFIG_FILE, JSON.stringify(merged, null, 2), 'utf-8');
+  await writeFile(CONFIG_FILE, JSON.stringify(merged, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  await chmod(CONFIG_FILE, 0o600).catch(() => {}); // tighten files created by older versions
 }
 
-export async function manageConfig(options: {
-  set?: string;
-  get?: string;
-  list?: boolean;
-}): Promise<void> {
+function display(key: string, value: unknown): string {
+  if (value === undefined || value === null || value === '') return '(not set)';
+  if (isConfigKey(key) && CONFIG_KEYS[key].secret) return maskSecret(String(value));
+  return String(value);
+}
+
+/** Returns a process exit code. */
+export async function manageConfig(options: { set?: string; get?: string; list?: boolean }): Promise<number> {
   if (options.set) {
-    const [key, ...valueParts] = options.set.split('=');
-    const value = valueParts.join('=');
-    await saveConfig({ [key]: value } as Partial<Config>);
-    console.log(`✓ Set ${key} = ${value}`);
-  } else if (options.get) {
-    const config = await loadConfig();
-    const value = config[options.get as keyof Config];
-    console.log(value !== undefined ? String(value) : `Key "${options.get}" not found`);
-  } else if (options.list) {
-    const config = await loadConfig();
-    console.log('\nCurrent configuration:\n');
-    for (const [key, value] of Object.entries(config)) {
-      const displayValue = key === 'apiKey' && value
-        ? `${String(value).slice(0, 8)}...`
-        : String(value ?? '(not set)');
-      console.log(`  ${key.padEnd(20)} ${displayValue}`);
+    const eq = options.set.indexOf('=');
+    if (eq <= 0) {
+      console.error('Usage: aicli config --set <key>=<value>');
+      return 1;
     }
-    console.log();
+    const key = options.set.slice(0, eq).trim();
+    const rawValue = options.set.slice(eq + 1);
+    if (!isConfigKey(key)) {
+      console.error(`Unknown config key "${key}". Valid keys: ${Object.keys(CONFIG_KEYS).join(', ')}`);
+      return 1;
+    }
+    let value: string | number | boolean;
+    try {
+      value = parseConfigValue(key, rawValue);
+    } catch (err) {
+      console.error(`Invalid value: ${(err as Error).message}`);
+      return 1;
+    }
+    await saveConfig({ [key]: value } as Partial<Config>);
+    console.log(`✓ Set ${key} = ${display(key, value)}`);
+    return 0;
   }
+  if (options.get) {
+    const config = await loadConfig();
+    if (!isConfigKey(options.get)) {
+      console.error(`Unknown config key "${options.get}". Valid keys: ${Object.keys(CONFIG_KEYS).join(', ')}`);
+      return 1;
+    }
+    console.log(display(options.get, config[options.get]));
+    return 0;
+  }
+  // Default (and --list): show everything
+  const config = await loadConfig();
+  console.log('\nCurrent configuration:\n');
+  for (const key of Object.keys(CONFIG_KEYS)) {
+    console.log(`  ${key.padEnd(20)} ${display(key, config[key as keyof Config])}`);
+  }
+  console.log(`\n  (file: ${CONFIG_FILE})\n`);
+  return 0;
 }
