@@ -18,6 +18,7 @@ import { dirname, join, relative, sep } from 'path';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { resolveInWorkspace } from '../utils/paths.js';
 import { looksBinary, truncate } from '../utils/text.js';
+import { resolveSearchConfig, webFetch, webSearch, type WebConfig } from './web.js';
 
 // ─── Limits ───────────────────────────────────────────────────────────────────
 
@@ -52,13 +53,65 @@ export interface ToolContext {
   allowOutsideWorkspace?: boolean;
   /** Ask the user to approve an action. Resolve true to proceed. */
   confirm?: (summary: string) => Promise<boolean>;
-  /** Aborts long-running tools (run_command). */
+  /** Aborts long-running tools (run_command, web tools). */
   signal?: AbortSignal;
+  /** Web tool settings (search provider/key, fetch limits). */
+  web?: WebConfig;
+}
+
+export interface ToolOptions {
+  web?: WebConfig;
 }
 
 // ─── Tool Definitions (OpenAI function calling format) ────────────────────────
 
-export function getTools(): ChatCompletionTool[] {
+export function getTools(options: ToolOptions = {}): ChatCompletionTool[] {
+  return [...fileTools(), ...webTools(options.web)];
+}
+
+/** web_search only when a provider key is configured; web_fetch unless disabled. */
+function webTools(web: WebConfig = {}): ChatCompletionTool[] {
+  const tools: ChatCompletionTool[] = [];
+  const search = resolveSearchConfig(web);
+  if (search) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'web_search',
+        description: `Search the web (via ${search.provider}). Returns titles, URLs and snippets; use web_fetch to read a result.`,
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query' },
+            count: { type: 'number', description: 'Number of results (1-10, default 5)' },
+          },
+          required: ['query'],
+        },
+      },
+    });
+  }
+  if (web.fetchEnabled !== false) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'web_fetch',
+        description:
+          'Fetch an http(s) URL and return its readable text (HTML is converted to text). Output is capped; private/local addresses are refused.',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: 'The http(s) URL to fetch' },
+            max_chars: { type: 'number', description: 'Max characters to return (default 20000, max 100000)' },
+          },
+          required: ['url'],
+        },
+      },
+    });
+  }
+  return tools;
+}
+
+function fileTools(): ChatCompletionTool[] {
   return [
     {
       type: 'function',
@@ -200,6 +253,12 @@ export async function executeTool(
         return await listDirectory(ctx, str(args.path) || '.', bool(args.recursive));
       case 'search_files':
         return await searchFiles(ctx, args.pattern, str(args.path) || '.', str(args.file_pattern), bool(args.ignore_case));
+      case 'web_search':
+        if (!resolveSearchConfig(ctx.web)) return 'Error: web_search is not configured. Set webSearchProvider and webSearchApiKey.';
+        return await webSearch(args.query, num(args.count), ctx.web ?? {}, ctx.signal);
+      case 'web_fetch':
+        if (ctx.web?.fetchEnabled === false) return 'Error: web_fetch is disabled (config webFetch=false).';
+        return await webFetch(args.url, num(args.max_chars), ctx.web ?? {}, ctx.signal);
       default:
         return `Error: Unknown tool "${name}"`;
     }
@@ -208,13 +267,18 @@ export async function executeTool(
   }
 }
 
-export function listTools(): void {
-  const tools = getTools();
+export function listTools(options: ToolOptions = {}): void {
+  const tools = getTools(options);
   console.log('\nAvailable tools:\n');
   for (const tool of tools) {
     const fn = tool.function;
     console.log(`  ${fn.name.padEnd(20)} ${fn.description ?? ''}`);
   }
+  const names = new Set(tools.map((t) => t.function.name));
+  if (!names.has('web_search')) {
+    console.log(`  ${'web_search'.padEnd(20)} (disabled: set webSearchProvider + webSearchApiKey, or TAVILY_API_KEY / BRAVE_API_KEY / SERPAPI_API_KEY)`);
+  }
+  if (!names.has('web_fetch')) console.log(`  ${'web_fetch'.padEnd(20)} (disabled: config webFetch=false)`);
   console.log();
 }
 

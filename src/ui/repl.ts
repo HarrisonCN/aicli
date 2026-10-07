@@ -4,6 +4,8 @@
 
 import { createInterface, type Interface } from 'readline';
 import { AgentAbortError, isAbortError, type Agent } from '../agent/index.js';
+import { createSession, saveSession, type Session } from '../utils/sessions.js';
+import { handleCommand, syncSession, type CommandContext } from './commands.js';
 
 /**
  * A lazily created readline interface with Ctrl+C support.
@@ -94,9 +96,35 @@ export async function runWithInterrupt(agent: Agent, term: Terminal | null, mess
   }
 }
 
+export interface ReplOptions {
+  /** Session to continue (e.g. from --resume); a new one is created otherwise. */
+  session?: Session;
+  /** Auto-save the session after every turn (default: true). */
+  saveSessions?: boolean;
+}
+
 /** Start an interactive REPL session. */
-export async function startRepl(agent: Agent, term: Terminal): Promise<void> {
-  process.stderr.write('\n🤖 aicli ready. Type your message, "/reset" to clear history, or "exit" to quit.\n\n');
+export async function startRepl(agent: Agent, term: Terminal, options: ReplOptions = {}): Promise<void> {
+  const saveSessions = options.saveSessions !== false;
+  const ctx: CommandContext = {
+    agent,
+    session: options.session ?? createSession(process.cwd(), agent.getModel()),
+    saveSessions,
+    write: (text) => process.stderr.write(text),
+  };
+  const persist = async () => {
+    if (!saveSessions || agent.history.length === 0) return;
+    syncSession(ctx);
+    await saveSession(ctx.session).catch((err: unknown) => {
+      process.stderr.write(`⚠️  Could not save session: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+  };
+
+  process.stderr.write(
+    `\n🤖 aicli ready (model ${agent.getModel()}). Type your message, /help for commands, or "exit" to quit.\n` +
+      (agent.history.length ? `   Resumed session ${ctx.session.id} (${agent.history.length} messages).\n` : '') +
+      '\n'
+  );
   for (;;) {
     let input: string | null;
     try {
@@ -107,10 +135,11 @@ export async function startRepl(agent: Agent, term: Terminal): Promise<void> {
     if (input === null) break;
     const trimmed = input.trim();
     if (!trimmed) continue;
-    if (['exit', 'quit', '/exit', '/quit'].includes(trimmed.toLowerCase())) break;
-    if (trimmed === '/reset') {
-      agent.reset();
-      process.stderr.write('History cleared.\n');
+    if (['exit', 'quit'].includes(trimmed.toLowerCase())) break;
+
+    const command = await handleCommand(trimmed, ctx);
+    if (command) {
+      if (command.exit) break;
       continue;
     }
 
@@ -121,8 +150,13 @@ export async function startRepl(agent: Agent, term: Terminal): Promise<void> {
       if (isAbortError(err)) process.stderr.write('\n⏹  Cancelled.\n');
       else process.stderr.write(`\nError: ${err instanceof Error ? err.message : String(err)}\n`);
     }
+    await persist();
     if (term.isClosed) break;
   }
   term.close();
+  await persist();
+  if (saveSessions && agent.history.length > 0) {
+    process.stderr.write(`\nSession saved: ${ctx.session.id}  (resume with: aicli chat --resume ${ctx.session.id})\n`);
+  }
   process.stderr.write('\nGoodbye! 👋\n');
 }

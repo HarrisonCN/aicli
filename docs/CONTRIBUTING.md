@@ -25,19 +25,26 @@ npm run dev -- chat "hello world"
 src/
 ├── cli.ts          # CLI entry point
 ├── agent/
-│   └── index.ts    # Core ReAct agent loop
+│   ├── index.ts    # Core ReAct agent loop
+│   └── history.ts  # Token estimates and context compaction
 ├── tools/
-│   └── index.ts    # Tool definitions and executors
+│   ├── index.ts    # Tool definitions and executors
+│   └── web.ts      # web_search providers and web_fetch
 ├── ui/
-│   └── banner.ts   # Terminal UI utilities
+│   ├── banner.ts   # Terminal UI utilities
+│   ├── commands.ts # REPL slash commands
+│   └── repl.ts     # REPL and approval prompts
 └── utils/
     ├── config.ts   # Configuration management
+    ├── models.ts   # Per-model request parameters
+    ├── sessions.ts # Saved chat sessions
+    ├── instructions.ts # AICLI.md loading
     └── types.ts    # TypeScript type definitions
 ```
 
 ## Adding a New Tool
 
-1. Add the tool definition to `src/tools/index.ts` in the `getTools()` function
+1. Add the tool definition to `src/tools/index.ts` (`fileTools()`, or `webTools()` for network tools)
 2. Add the tool executor in the `executeTool()` switch statement
 3. Implement the tool function
 4. Add tests in `src/tools/index.test.ts`
@@ -45,7 +52,7 @@ src/
 Example:
 
 ```typescript
-// In getTools():
+// In fileTools():
 {
   type: 'function',
   function: {

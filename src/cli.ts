@@ -6,9 +6,11 @@
 
 import { createRequire } from 'module';
 import { Command, InvalidArgumentError } from 'commander';
-import { createAgent, isAbortError, type AgentOptions } from './agent/index.js';
-import { loadConfig } from './utils/config.js';
+import { createAgent, isAbortError, type Agent, type AgentOptions } from './agent/index.js';
+import { CONFIG_DIR, loadConfig } from './utils/config.js';
 import { loadContext } from './utils/context.js';
+import { formatInstructions, loadInstructions } from './utils/instructions.js';
+import { createSession, deleteSession, formatSessionList, listSessions, loadSession, saveSession, type Session } from './utils/sessions.js';
 import { printBanner } from './ui/banner.js';
 import { Terminal, runWithInterrupt, startRepl } from './ui/repl.js';
 
@@ -29,6 +31,8 @@ interface CommonOptions {
   yes?: boolean;
   allowOutsideWorkspace?: boolean;
   json?: boolean;
+  instructions?: boolean;
+  resume?: string | boolean;
 }
 
 function parseTemperature(value: string): number {
@@ -52,7 +56,8 @@ function addCommonOptions(cmd: Command): Command {
     .option('--no-stream', 'Wait for the full response instead of streaming tokens')
     .option('--context <path>', 'Load context from a file or directory')
     .option('-y, --yes', 'Auto-approve file writes, edits and shell commands (use with care)')
-    .option('--allow-outside-workspace', 'Let file tools access paths outside the current directory');
+    .option('--allow-outside-workspace', 'Let file tools access paths outside the current directory')
+    .option('--no-instructions', 'Do not load AICLI.md project instructions');
 }
 
 /** Read piped stdin (e.g. `git diff | aicli run "review this"`). */
@@ -70,33 +75,86 @@ async function readStdin(): Promise<string> {
   return text.length > MAX_STDIN_CHARS ? text.slice(0, MAX_STDIN_CHARS) + '\n… [stdin truncated]' : text;
 }
 
-async function buildAgentOptions(options: CommonOptions, term: Terminal | null): Promise<AgentOptions> {
+async function buildAgentOptions(
+  options: CommonOptions,
+  term: Terminal | null
+): Promise<AgentOptions & { saveSessions: boolean }> {
   const config = await loadConfig();
   const root = process.cwd();
+  let instructionsText: string | undefined;
+  if (options.instructions !== false && config.projectInstructions !== false) {
+    const files = await loadInstructions(root, CONFIG_DIR);
+    if (files.length) {
+      instructionsText = formatInstructions(files);
+      if (!options.json) process.stderr.write(`📋 Loaded instructions: ${files.map((f) => f.label).join(', ')}\n`);
+    }
+  }
   return {
     apiKey: config.apiKey,
     baseURL: config.baseURL,
     model: options.model ?? config.defaultModel,
     temperature: options.temperature ?? config.temperature,
+    temperatureExplicit: options.temperature !== undefined,
     maxIterations: options.maxIterations ?? config.maxIterations,
     stream: options.stream === false ? false : config.stream,
+    streamUsage: config.streamUsage,
     tools: options.tools,
     context: options.context,
     contextText: options.context ? await loadContext(options.context, root) : undefined,
+    instructionsText,
+    modelSettings: config.modelSettings,
+    contextWindow: config.contextWindow,
+    contextStrategy: config.contextStrategy,
+    web: {
+      searchProvider: config.webSearchProvider,
+      searchApiKey: config.webSearchApiKey,
+      searchBaseURL: config.webSearchBaseURL,
+      fetchEnabled: config.webFetch,
+    },
     autoApprove: options.yes === true,
     allowOutsideWorkspace: options.allowOutsideWorkspace === true,
     root,
     quiet: options.json === true,
     confirm: term ? (summary) => term.confirm(summary) : undefined,
+    saveSessions: config.saveSessions !== false,
   };
 }
 
-async function runOnce(message: string, options: CommonOptions): Promise<void> {
+/** Load the session named by --resume (true = latest for this directory). */
+async function resumeSession(agent: Agent, options: CommonOptions): Promise<Session | undefined> {
+  const { resume } = options;
+  if (resume === undefined || resume === false) return undefined;
+  const ref = typeof resume === 'string' ? resume : undefined;
+  const session = await loadSession(ref, ref ? undefined : process.cwd());
+  if (!session) {
+    process.stderr.write(
+      ref ? `No saved session matches "${ref}". Starting a new one (see \`aicli sessions\`).\n` : 'No saved session for this directory yet. Starting a new one.\n'
+    );
+    return undefined;
+  }
+  agent.loadHistory(session.messages);
+  // An explicit --model wins over the model the session was saved with.
+  if (session.model && options.model === undefined) agent.setModel(session.model);
+  return session;
+}
+
+/** Run one message; `persist` saves it as a session (chat does, run does not). */
+async function runOnce(message: string, options: CommonOptions, persist = false): Promise<void> {
   // Approval prompts need a real terminal; with piped stdin, mutating tools are denied unless --yes.
   const term = process.stdin.isTTY ? new Terminal() : null;
   try {
-    const agent = createAgent(await buildAgentOptions(options, term));
+    const agentOptions = await buildAgentOptions(options, term);
+    const agent = createAgent(agentOptions);
+    const resumed = await resumeSession(agent, options);
     const result = await runWithInterrupt(agent, term, message);
+    if (agentOptions.saveSessions && (persist || resumed)) {
+      const session = resumed ?? createSession(process.cwd(), agent.getModel());
+      session.messages = agent.history.slice();
+      session.model = agent.getModel();
+      session.usage = { ...agent.usage };
+      await saveSession(session);
+      if (!options.json) process.stderr.write(`\n💾 Session ${session.id} (continue with: aicli chat --resume ${session.id})\n`);
+    }
     if (options.json) console.log(JSON.stringify(result, null, 2));
     else if (!result.success) process.stderr.write(`\n⚠️  ${result.output}\n`);
     if (!result.success) process.exitCode = 1;
@@ -118,11 +176,12 @@ program
   .description('An open-source AI agent that lives in your terminal')
   .version(version);
 
-addCommonOptions(program.command('chat [message]').description('Start a chat session with the AI agent')).action(
-  async (message: string | undefined, options: CommonOptions) => {
+addCommonOptions(program.command('chat [message]').description('Start a chat session with the AI agent'))
+  .option('-r, --resume [id]', 'Resume a saved session (default: the latest one for this directory)')
+  .action(async (message: string | undefined, options: CommonOptions) => {
     printBanner(version);
     if (message) {
-      await runOnce(message, options);
+      await runOnce(message, options, true);
       return;
     }
     if (!process.stdin.isTTY) {
@@ -133,20 +192,21 @@ addCommonOptions(program.command('chat [message]').description('Start a chat ses
         process.exitCode = 1;
         return;
       }
-      await runOnce(input, options);
+      await runOnce(input, options, true);
       return;
     }
     const term = new Terminal();
     try {
-      const agent = createAgent(await buildAgentOptions(options, term));
-      await startRepl(agent, term);
+      const agentOptions = await buildAgentOptions(options, term);
+      const agent = createAgent(agentOptions);
+      const session = await resumeSession(agent, options);
+      await startRepl(agent, term, { session, saveSessions: agentOptions.saveSessions });
     } catch (err) {
       term.close();
       process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
     }
-  }
-);
+  });
 
 addCommonOptions(program.command('run <task>').description('Run a one-shot task and exit'))
   .option('--json', 'Output result as JSON')
@@ -161,8 +221,9 @@ program
   .description('Manage aicli configuration')
   .option('--set <key=value>', 'Set a configuration value')
   .option('--get <key>', 'Get a configuration value')
+  .option('--unset <key>', 'Remove a configuration value')
   .option('--list', 'List all configuration values')
-  .action(async (options: { set?: string; get?: string; list?: boolean }) => {
+  .action(async (options: { set?: string; get?: string; unset?: string; list?: boolean }) => {
     const { manageConfig } = await import('./utils/config.js');
     process.exitCode = await manageConfig(options);
   });
@@ -172,7 +233,35 @@ program
   .description('List all available tools')
   .action(async () => {
     const { listTools } = await import('./tools/index.js');
-    listTools();
+    const config = await loadConfig();
+    listTools({
+      web: {
+        searchProvider: config.webSearchProvider,
+        searchApiKey: config.webSearchApiKey,
+        searchBaseURL: config.webSearchBaseURL,
+        fetchEnabled: config.webFetch,
+      },
+    });
+  });
+
+program
+  .command('sessions')
+  .description('List or delete saved chat sessions')
+  .option('--delete <id>', 'Delete a session by id or name')
+  .action(async (options: { delete?: string }) => {
+    if (options.delete) {
+      const ok = await deleteSession(options.delete).catch((err: unknown) => {
+        process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+        return false;
+      });
+      if (ok) console.log(`✓ Deleted session ${options.delete}`);
+      else {
+        process.stderr.write(`No session matches "${options.delete}".\n`);
+        process.exitCode = 1;
+      }
+      return;
+    }
+    console.log(formatSessionList(await listSessions(), 50));
   });
 
 // Show help if no command provided

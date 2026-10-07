@@ -26,6 +26,7 @@ It uses a **ReAct (Reasoning + Acting)** loop to autonomously:
 - 📂 Read and write files in your project
 - 🖥️ Execute shell commands and interpret output
 - 🔍 Search across your codebase with regex
+- 🌐 Search the web and read pages (optional, bring your own search API key)
 - 🐛 Find and fix bugs end-to-end
 - ✅ Generate and run tests
 
@@ -111,9 +112,62 @@ aicli run --json "list all TODO comments in the codebase"
 aicli run --yes "run the tests and fix any failures"
 ```
 
-In the REPL, type `/reset` to clear the conversation and `exit` to quit.
 Press **Ctrl+C** to cancel the current response or command; press it again to
 force-quit.
+
+### Sessions and slash commands
+
+Chat sessions are saved automatically to `~/.aicli/sessions/` (mode 600) after
+every turn, so you can pick up where you left off:
+
+```bash
+aicli chat --resume            # latest session for this directory
+aicli chat --resume demo       # by name, id, or unique id prefix
+aicli chat --resume demo "and now add tests"   # one more message, then exit
+aicli sessions                 # list saved sessions
+aicli sessions --delete demo
+```
+
+In the REPL:
+
+| Command | Description |
+|---------|-------------|
+| `/help` | List commands |
+| `/model [name]` | Show the model (context window, temperature support) or switch to another |
+| `/cost` (`/usage`, `/tokens`) | Requests, token usage reported by the API, cost (if prices are configured) and context size |
+| `/compact` | Summarize older turns now to free up context |
+| `/save [name]` | Save the session, optionally giving it a name |
+| `/load <id\|name>` | Load a saved session |
+| `/sessions` | List saved sessions |
+| `/clear` (`/reset`) | Clear the conversation and start a new session |
+| `/exit`, `exit` | Quit (also Ctrl+D) |
+
+Set `saveSessions=false` to turn auto-saving off.
+
+### Project instructions (`AICLI.md`)
+
+Put an `AICLI.md` file in your repository root to give the agent standing
+instructions (build commands, code style, things to avoid). It is added to the
+system prompt on every run. aicli looks in:
+
+1. `~/.aicli/AICLI.md` — your personal instructions for every project
+2. every directory from the repository root (nearest `.git`) down to the current
+   directory, taking the first of `AICLI.md`, `.aicli/AICLI.md`,
+   `.aicli/instructions.md`, `.aicli.md` or a `.aicli` file
+
+Files are capped at 20,000 characters each. Use `--no-instructions` (or
+`projectInstructions=false`) to skip them. Instructions from a cloned repo are
+untrusted text: they can steer the model but cannot approve file writes or
+commands.
+
+### Long conversations
+
+aicli estimates how many tokens the conversation uses and compacts it before it
+would overflow the model's context window: large old tool outputs are elided
+first, then the oldest turns are summarized by the model into a short recap
+(`contextStrategy=summarize`, the default). Use `contextStrategy=truncate` to
+drop old turns without a summary call, or `off` to disable. Tool calls are never
+separated from their results.
 
 ### Options (`chat` and `run`)
 
@@ -127,6 +181,8 @@ force-quit.
 | `--context <path>` | Add a file (contents) or directory (file tree) to the prompt |
 | `-y, --yes` | Auto-approve writes, edits and shell commands |
 | `--allow-outside-workspace` | Let file tools access paths outside the current directory |
+| `--no-instructions` | Do not load `AICLI.md` project instructions |
+| `-r, --resume [id]` (`chat` only) | Resume a saved session |
 | `--json` (`run` only) | Print the result as JSON |
 
 ## Safety
@@ -137,6 +193,12 @@ force-quit.
 - **Workspace sandbox:** file tools only touch paths inside the current
   directory, including through symlinks, unless `--allow-outside-workspace` is set.
   Note that an approved `run_command` runs with your full user permissions.
+- **Web:** `web_fetch` only fetches `http(s)` URLs, refuses private, loopback
+  and link-local addresses (checked again on every redirect), stops after 2 MB
+  and 5 redirects, and returns at most 100,000 characters. It does not ask for
+  approval; set `webFetch=false` if the agent should have no network access.
+  Pages it reads can contain prompt injection, so keep approvals on for writes
+  and commands when browsing.
 - **Limits:** command timeouts (default 30 s), and output/read/search size caps
   keep runaway tools from flooding the model's context.
 
@@ -150,9 +212,27 @@ force-quit.
 | `run_command` | Execute shell commands with timeout (asks first) |
 | `list_directory` | List files and folders (recursive) |
 | `search_files` | Regex search across files (pure JS, works on Windows) |
+| `web_search` | Search the web via Tavily, Brave or SerpAPI (only when a key is configured) |
+| `web_fetch` | Fetch a URL and return readable text (HTML converted, size-limited) |
 
-`write_file` and `edit_file` also ask before changing anything. Web search is on
-the roadmap and not available yet.
+`write_file` and `edit_file` also ask before changing anything.
+
+### Web search setup
+
+`web_search` is only offered to the model when a provider key is configured:
+
+```bash
+# Pick one provider
+aicli config --set webSearchProvider=tavily     # or brave, serpapi
+aicli config --set webSearchApiKey=tvly-...
+
+# …or just export the provider's key (provider is picked automatically)
+export TAVILY_API_KEY=tvly-...      # https://tavily.com
+export BRAVE_API_KEY=...            # https://brave.com/search/api/
+export SERPAPI_API_KEY=...          # https://serpapi.com
+```
+
+`aicli tools` shows whether web search is enabled.
 
 ```bash
 # List all available tools
@@ -165,12 +245,42 @@ aicli tools
 
 | Provider | Models |
 |----------|--------|
-| OpenAI | `gpt-4o`, `gpt-4o-mini`, `o1`, `o3-mini` |
+| OpenAI | `gpt-4o`, `gpt-4.1`, `o1`, `o3`, `o4-mini`, `gpt-5` |
 | Anthropic (via proxy) | `claude-3-5-sonnet`, `claude-3-haiku` |
 | Google (via proxy) | `gemini-2.0-flash`, `gemini-1.5-pro` |
 | Ollama (local) | `llama3.3`, `qwen2.5-coder`, `deepseek-r1` |
 | Groq | `llama-3.3-70b-versatile` |
 | Together AI | `meta-llama/Llama-3-70b-chat-hf` |
+
+### Model-aware parameters
+
+Reasoning models (`o1`, `o3`, `o4-mini`, `gpt-5`, …) reject `temperature`, so
+aicli leaves it out for them (and warns if you passed `-t`), sends the system
+prompt with the `developer` role, and uses `max_completion_tokens`. Provider
+prefixes such as `openai/o3-mini` are recognised. Known context windows are
+built in; unknown models default to 32,768 tokens.
+
+Override anything per model (exact name or `*` glob) with `modelSettings`:
+
+```bash
+aicli config --set 'modelSettings={
+  "o3*":        { "reasoningEffort": "high" },
+  "qwen2.5*":   { "contextWindow": 32768, "temperature": 0.2 },
+  "my-proxy-r1":{ "supportsTemperature": false, "maxOutputTokens": 8000 },
+  "gpt-4o":     { "inputPricePerMTok": 2.5, "outputPricePerMTok": 10 }
+}'
+```
+
+| Setting | Meaning |
+|---------|---------|
+| `supportsTemperature` | `false` to never send `temperature` |
+| `temperature` | Temperature for this model (overrides the global one) |
+| `maxOutputTokens` | Cap on reply length (not sent when unset) |
+| `tokenParam` | `max_tokens` or `max_completion_tokens` |
+| `contextWindow` | Context size in tokens, used for history compaction |
+| `reasoningEffort` | `minimal`, `low`, `medium` or `high` |
+| `systemRole` | `system`, `developer` or `user` |
+| `inputPricePerMTok` / `outputPricePerMTok` | USD per million tokens, for `/cost` |
 
 ## Configuration Reference
 
@@ -184,8 +294,19 @@ aicli tools
 | `temperature` | — | `0.7` | Sampling temperature |
 | `maxIterations` | — | `20` | Max agent loop iterations |
 | `stream` | — | `true` | Stream tokens as they arrive |
+| `streamUsage` | — | `true` | Ask for token usage on streamed replies (`false` for servers that reject `stream_options`) |
+| `contextWindow` | — | per model | Override the context window for every model |
+| `contextStrategy` | — | `summarize` | `summarize`, `truncate` or `off` |
+| `modelSettings` | — | — | Per-model settings (JSON, see above) |
+| `webSearchProvider` | `AICLI_WEB_SEARCH_PROVIDER` | auto | `tavily`, `brave` or `serpapi` |
+| `webSearchApiKey` | `TAVILY_API_KEY` / `BRAVE_API_KEY` / `SERPAPI_API_KEY` | — | Search API key (masked in `config --list`) |
+| `webSearchBaseURL` | — | provider default | Custom search endpoint (e.g. a proxy) |
+| `webFetch` | — | `true` | Enable the `web_fetch` tool |
+| `projectInstructions` | — | `true` | Load `AICLI.md` files |
+| `saveSessions` | — | `true` | Auto-save chat sessions |
 
-Unknown keys and invalid values are rejected by `aicli config --set`.
+Unknown keys and invalid values are rejected by `aicli config --set`; use
+`aicli config --unset <key>` to remove one.
 
 ## Architecture
 
@@ -194,16 +315,22 @@ aicli/
 ├── src/
 │   ├── cli.ts          # CLI entry point (Commander.js)
 │   ├── agent/
-│   │   └── index.ts    # ReAct agent loop
+│   │   ├── index.ts    # ReAct agent loop, usage tracking
+│   │   └── history.ts  # Token estimates & context compaction
 │   ├── tools/
-│   │   └── index.ts    # Tool definitions & executors
+│   │   ├── index.ts    # Tool definitions & executors
+│   │   └── web.ts      # web_search providers & web_fetch
 │   ├── ui/
 │   │   ├── banner.ts   # Terminal UI utilities
+│   │   ├── commands.ts # REPL slash commands
 │   │   └── repl.ts     # REPL, approval prompts, Ctrl+C handling
 │   └── utils/
 │       ├── config.ts   # Config management
 │       ├── context.ts  # --context loading
+│       ├── instructions.ts # AICLI.md project instructions
+│       ├── models.ts   # Model profiles & request params
 │       ├── paths.ts    # Workspace sandboxing
+│       ├── sessions.ts # Saved chat sessions
 │       ├── text.ts     # Truncation / masking helpers
 │       └── types.ts    # Shared TypeScript types
 ├── examples/           # Usage examples
@@ -233,10 +360,11 @@ npm run build
 
 ## Roadmap
 
-- [ ] Web search tool
+- [x] Web search & fetch tools
+- [x] Saved sessions (`--resume`) and context compaction
+- [x] Project instructions (`AICLI.md`)
 - [ ] MCP (Model Context Protocol) server support
 - [ ] Plugin system for custom tools
-- [ ] Persistent conversation memory
 - [ ] Web UI / dashboard
 - [ ] Multi-agent orchestration
 - [ ] Vision support (screenshot analysis)

@@ -2,6 +2,8 @@
  * Shared type definitions for aicli
  */
 
+import type { ModelSettings } from './models.js';
+import type { SearchProviderName } from '../tools/web.js';
 import type {
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
@@ -30,6 +32,28 @@ export interface AgentConfig {
   allowOutsideWorkspace?: boolean;
   /** Workspace root (defaults to process.cwd()) */
   root?: string;
+  /** True when the temperature came from the command line (warn if the model ignores it). */
+  temperatureExplicit?: boolean;
+  /** Per-model request settings, keyed by model name or `*` glob. */
+  modelSettings?: Record<string, ModelSettings>;
+  /** Override the context window (tokens) for every model. */
+  contextWindow?: number;
+  /** What to do when history would overflow the context window. */
+  contextStrategy?: ContextStrategy;
+  /** Ask the API for token usage on streamed responses (default: true). */
+  streamUsage?: boolean;
+  /** Project instructions (AICLI.md etc.) loaded into the system prompt. */
+  instructionsText?: string;
+  /** Web tools configuration. */
+  web?: import('../tools/web.js').WebConfig;
+}
+
+export type ContextStrategy = 'summarize' | 'truncate' | 'off';
+
+export interface Usage {
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
 }
 
 export interface AgentResult {
@@ -51,4 +75,14 @@ export interface Config {
   temperature?: number;
   maxIterations?: number;
   stream?: boolean;
+  streamUsage?: boolean;
+  contextWindow?: number;
+  contextStrategy?: ContextStrategy;
+  modelSettings?: Record<string, ModelSettings>;
+  webSearchProvider?: SearchProviderName;
+  webSearchApiKey?: string;
+  webSearchBaseURL?: string;
+  webFetch?: boolean;
+  projectInstructions?: boolean;
+  saveSessions?: boolean;
 }
