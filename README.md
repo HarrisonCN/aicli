@@ -51,7 +51,11 @@ Bearer prefix check is missing. Here's the fix:
 
 ### Installation
 
-> `aicli` is not published to npm yet. Install from source:
+```bash
+npm install -g @winstonsayno/aicli
+```
+
+Or install from source:
 
 ```bash
 git clone https://github.com/HarrisonCN/aicli.git
